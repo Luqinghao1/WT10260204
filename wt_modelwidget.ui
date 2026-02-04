@@ -200,7 +200,6 @@ QLabel {
           <item row="2" column="1">
            <widget class="QLineEdit" name="rwEdit"/>
           </item>
-
           <item row="3" column="0">
            <widget class="QLabel" name="label_mu">
             <property name="text">
@@ -298,7 +297,6 @@ QLabel {
           <item row="0" column="1">
            <widget class="QLineEdit" name="kfEdit"/>
           </item>
-
           <item row="1" column="0">
            <widget class="QLabel" name="label_km">
             <property name="text">
@@ -309,7 +307,6 @@ QLabel {
           <item row="1" column="1">
            <widget class="QLineEdit" name="kmEdit"/>
           </item>
-
           <item row="2" column="0">
            <widget class="QLabel" name="label_eta12">
             <property name="text">
@@ -320,7 +317,6 @@ QLabel {
           <item row="2" column="1">
            <widget class="QLineEdit" name="eta12Edit"/>
           </item>
-
           <item row="3" column="0">
            <widget class="QLabel" name="label_L">
             <property name="text">
@@ -331,7 +327,6 @@ QLabel {
           <item row="3" column="1">
            <widget class="QLineEdit" name="LEdit"/>
           </item>
-
           <item row="4" column="0">
            <widget class="QLabel" name="label_Lf">
             <property name="text">
@@ -342,7 +337,6 @@ QLabel {
           <item row="4" column="1">
            <widget class="QLineEdit" name="LfEdit"/>
           </item>
-
           <item row="5" column="0">
            <widget class="QLabel" name="label_nf">
             <property name="text">
@@ -353,7 +347,6 @@ QLabel {
           <item row="5" column="1">
            <widget class="QLineEdit" name="nfEdit"/>
           </item>
-
           <item row="6" column="0">
            <widget class="QLabel" name="label_rmD">
             <property name="text">
@@ -364,7 +357,6 @@ QLabel {
           <item row="6" column="1">
            <widget class="QLineEdit" name="rmDEdit"/>
           </item>
-
           <item row="7" column="0">
            <widget class="QLabel" name="label_reD">
             <property name="text">
@@ -375,7 +367,6 @@ QLabel {
           <item row="7" column="1">
            <widget class="QLineEdit" name="reDEdit"/>
           </item>
-
           <item row="8" column="0">
            <widget class="QLabel" name="label_omga1">
             <property name="text">
@@ -386,7 +377,6 @@ QLabel {
           <item row="8" column="1">
            <widget class="QLineEdit" name="omga1Edit"/>
           </item>
-
           <item row="9" column="0">
            <widget class="QLabel" name="label_omga2">
             <property name="text">
@@ -397,7 +387,6 @@ QLabel {
           <item row="9" column="1">
            <widget class="QLineEdit" name="omga2Edit"/>
           </item>
-
           <item row="10" column="0">
            <widget class="QLabel" name="label_remda1">
             <property name="text">
@@ -408,7 +397,6 @@ QLabel {
           <item row="10" column="1">
            <widget class="QLineEdit" name="remda1Edit"/>
           </item>
-
           <item row="11" column="0">
            <widget class="QLabel" name="label_remda2">
             <property name="text">
@@ -419,7 +407,6 @@ QLabel {
           <item row="11" column="1">
            <widget class="QLineEdit" name="remda2Edit"/>
           </item>
-
           <item row="12" column="0">
            <widget class="QLabel" name="label_gamaD">
             <property name="toolTip">
@@ -436,7 +423,6 @@ QLabel {
           <item row="12" column="1">
            <widget class="QLineEdit" name="gamaDEdit"/>
           </item>
-
           <item row="13" column="0">
            <widget class="QLabel" name="label_cD">
             <property name="text">
@@ -447,7 +433,6 @@ QLabel {
           <item row="13" column="1">
            <widget class="QLineEdit" name="cDEdit"/>
           </item>
-
           <item row="14" column="0">
            <widget class="QLabel" name="label_s">
             <property name="text">
@@ -457,6 +442,26 @@ QLabel {
           </item>
           <item row="14" column="1">
            <widget class="QLineEdit" name="sEdit"/>
+          </item>
+          <item row="15" column="0">
+           <widget class="QLabel" name="label_alpha">
+            <property name="text">
+             <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;变井储时间参数 α (h):&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+            </property>
+           </widget>
+          </item>
+          <item row="15" column="1">
+           <widget class="QLineEdit" name="alphaEdit"/>
+          </item>
+          <item row="16" column="0">
+           <widget class="QLabel" name="label_cphi">
+            <property name="text">
+             <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;变井储压力参数 Cφ (MPa):&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+            </property>
+           </widget>
+          </item>
+          <item row="16" column="1">
+           <widget class="QLineEdit" name="cPhiEdit"/>
           </item>
          </layout>
         </widget>
@@ -482,7 +487,8 @@ QLabel {
          <item>
           <widget class="QPushButton" name="calculateButton">
            <property name="styleSheet">
-             <string notr="true">background-color: #4CAF50; color: white; font-weight: bold; padding: 6px;</string>
+             <string notr="true">background-color: #4CAF50;
+color: white; font-weight: bold; padding: 6px;</string>
            </property>
            <property name="text">
             <string>开始计算</string>
@@ -502,7 +508,8 @@ QLabel {
      </widget>
      <widget class="QWidget" name="rightPanel" native="true">
       <property name="styleSheet">
-       <string notr="true">QWidget#rightPanel { background-color: white; border: none; }</string>
+       <string notr="true">QWidget#rightPanel { background-color: white;
+border: none; }</string>
       </property>
       <layout class="QVBoxLayout" name="rightLayout">
        <property name="leftMargin">
@@ -520,10 +527,13 @@ QLabel {
        <item>
         <widget class="QTabWidget" name="tabWidget_Right">
          <property name="styleSheet">
-          <string notr="true">QTabWidget::pane { border: none; } /* 去除标签页下方的横线 */
-QTabBar::tab { background: #f0f0f0; color: #333333; padding: 6px 12px; border: none; border-bottom: 2px solid transparent; margin-right: 2px; }
+          <string notr="true">QTabWidget::pane { border: none;
+} /* 去除标签页下方的横线 */
+QTabBar::tab { background: #f0f0f0; color: #333333; padding: 6px 12px; border: none; border-bottom: 2px solid transparent; margin-right: 2px;
+}
 QTabBar::tab:hover { background-color: #e0e0e0; }
-QTabBar::tab:selected { background: white; color: #0078d7; border-bottom: 2px solid #0078d7; font-weight: bold; }</string>
+QTabBar::tab:selected { background: white; color: #0078d7; border-bottom: 2px solid #0078d7; font-weight: bold;
+}</string>
          </property>
          <property name="currentIndex">
           <number>0</number>

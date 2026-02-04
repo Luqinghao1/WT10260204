@@ -2,9 +2,12 @@
  * 文件名: wt_modelwidget.cpp
  * 文件作用: 压裂水平井复合页岩油模型界面类实现
  * 功能描述:
- * 1. 界面初始化：根据模型类型动态调整参数输入框的显示/隐藏 (如内/外区参数)。
- * 2. 求解器集成：根据 ID 范围 (0-17 或 18-35) 实例化并调用对应的数学模型。
- * 3. 业务逻辑：处理计算请求、参数敏感性分析、结果绘图与导出。
+ * 1. 界面初始化：根据模型类型动态调整参数输入框的显示/隐藏。
+ * 2. 求解器集成：根据 ID 范围分发计算任务。
+ * 3. 业务逻辑：处理计算请求、参数读取、结果绘图与导出。
+ * 修改记录:
+ * 1. [修复] 移除动态创建代码，改为直接使用 UI 文件中的 alphaEdit 和 cPhiEdit 控件。
+ * 2. [修复] 修正了参数可见性逻辑，确保切换模型时控件状态正确。
  */
 
 #include "wt_modelwidget.h"
@@ -34,32 +37,28 @@ WT_ModelWidget::WT_ModelWidget(ModelType type, QWidget *parent)
 {
     ui->setupUi(this);
 
-    // [修改] 根据 ID 范围实例化对应的求解器
-    if (m_type >= 0 && m_type <= 17) {
+    // 实例化求解器
+    // 0-35: Group 1 (Solver1)
+    // 36-71: Group 2 (Solver2)
+    if (m_type >= 0 && m_type <= 35) {
         m_solver1 = new ModelSolver01_06((ModelSolver01_06::ModelType)m_type);
     }
-    else if (m_type >= 18 && m_type <= 35) {
-        // ModelSolver19_36 的枚举从 0 开始
-        m_solver2 = new ModelSolver19_36((ModelSolver19_36::ModelType)(m_type - 18));
+    else if (m_type >= 36 && m_type <= 71) {
+        m_solver2 = new ModelSolver19_36((ModelSolver19_36::ModelType)(m_type - 36));
     }
 
-    // 初始化曲线颜色列表
     m_colorList = { Qt::red, Qt::blue, QColor(0,180,0), Qt::magenta, QColor(255,140,0), Qt::cyan };
 
-    // 设置 Splitter 初始比例
     QList<int> sizes;
     sizes << 240 << 960;
     ui->splitter->setSizes(sizes);
     ui->splitter->setCollapsible(0, false);
 
-    // 设置按钮文本
     ui->btnSelectModel->setText(getModelName());
 
     initUi();
     initChart();
     setupConnections();
-
-    // 初始化参数显示
     onResetParameters();
 }
 
@@ -72,19 +71,14 @@ WT_ModelWidget::~WT_ModelWidget()
 
 QString WT_ModelWidget::getModelName() const {
     if (m_solver1) return ModelSolver01_06::getModelName((ModelSolver01_06::ModelType)m_type, false);
-    if (m_solver2) return ModelSolver19_36::getModelName((ModelSolver19_36::ModelType)(m_type - 18), false);
+    if (m_solver2) return ModelSolver19_36::getModelName((ModelSolver19_36::ModelType)(m_type - 36), false);
     return "未知模型";
 }
 
-// 转发给 Solver 进行计算
 WT_ModelWidget::ModelCurveData WT_ModelWidget::calculateTheoreticalCurve(const QMap<QString, double>& params, const QVector<double>& providedTime)
 {
-    if (m_solver1) {
-        return m_solver1->calculateTheoreticalCurve(params, providedTime);
-    }
-    if (m_solver2) {
-        return m_solver2->calculateTheoreticalCurve(params, providedTime);
-    }
+    if (m_solver1) return m_solver1->calculateTheoreticalCurve(params, providedTime);
+    if (m_solver2) return m_solver2->calculateTheoreticalCurve(params, providedTime);
     return ModelCurveData();
 }
 
@@ -96,78 +90,51 @@ void WT_ModelWidget::setHighPrecision(bool high)
 }
 
 void WT_ModelWidget::initUi() {
-    // 1. 标签文本更新
+    // 1. 基础标签更新
     if(ui->label_km) ui->label_km->setText("流度比 M12");
     if(ui->label_rmD) ui->label_rmD->setText("复合半径 rm (m)");
     if(ui->label_reD) ui->label_reD->setText("外区半径 re (m)");
     if(ui->label_cD) ui->label_cD->setText("井筒储集 C (m³/MPa)");
 
-    // 2. 动态添加新参数输入框 (remda2, eta12)
-    QWidget* parentWidget = ui->remda1Edit->parentWidget();
-    QGridLayout* layout = qobject_cast<QGridLayout*>(parentWidget->layout());
-    QLineEdit* editRemda2 = parentWidget->findChild<QLineEdit*>("remda2Edit");
-    QLineEdit* editEta12 = parentWidget->findChild<QLineEdit*>("eta12Edit");
+    // --- 2. 可见性控制逻辑 ---
 
-    if (layout) {
-        if (!editRemda2) {
-            QLabel* labelRemda2 = new QLabel("外区窜流系数 λ<sub>2</sub>:", parentWidget);
-            labelRemda2->setObjectName("label_remda2");
-            editRemda2 = new QLineEdit(parentWidget);
-            editRemda2->setObjectName("remda2Edit");
+    // A. 边界条件 (每12个一组，0-3为无限大)
+    int groupIdx = m_type % 12;
+    bool isInfinite = (groupIdx < 4);
+    ui->label_reD->setVisible(!isInfinite);
+    ui->reDEdit->setVisible(!isInfinite);
 
-            QLabel* labelEta12 = new QLabel("导压系数比 η<sub>12</sub>:", parentWidget);
-            editEta12 = new QLineEdit(parentWidget);
-            editEta12->setObjectName("eta12Edit");
+    // B. 井储与表皮逻辑
+    // 0: Const, 1: Line, 2: Fair, 3: Hegeman
+    int storageType = m_type % 4;
 
-            int row = layout->rowCount();
-            layout->addWidget(labelRemda2, row, 0);
-            layout->addWidget(editRemda2, row, 1);
-            layout->addWidget(labelEta12, row + 1, 0);
-            layout->addWidget(editEta12, row + 1, 1);
-        }
-    }
+    // 线源解(1)不显示 C 和 S，其他(0, 2, 3)都需要显示
+    bool hasBasicStorage = (storageType != 1);
+    ui->label_cD->setVisible(hasBasicStorage);
+    ui->cDEdit->setVisible(hasBasicStorage);
+    ui->label_s->setVisible(hasBasicStorage);
+    ui->sEdit->setVisible(hasBasicStorage);
 
-    // 3. 控制边界参数可见性 (规律: 每6个一组，前2个为无限大)
-    // 无限大: id%6 == 0 or 1
-    int rem = m_type % 6;
-    bool isInfinite = (rem == 0 || rem == 1);
+    // [新增] 变井储参数可见性
+    // 仅 Fair(2) 和 Hegeman(3) 需要 alpha 和 C_phi
+    bool hasVarStorage = (storageType == 2 || storageType == 3);
 
-    if (isInfinite) {
-        ui->label_reD->setVisible(false);
-        ui->reDEdit->setVisible(false);
-    } else {
-        ui->label_reD->setVisible(true);
-        ui->reDEdit->setVisible(true);
-    }
+    ui->label_alpha->setVisible(hasVarStorage);
+    ui->alphaEdit->setVisible(hasVarStorage);
+    ui->label_cphi->setVisible(hasVarStorage);
+    ui->cPhiEdit->setVisible(hasVarStorage);
 
-    // 4. 控制井储表皮可见性 (偶数ID为考虑)
-    bool hasStorage = (m_type % 2 == 0);
-    ui->label_cD->setVisible(hasStorage);
-    ui->cDEdit->setVisible(hasStorage);
-    ui->label_s->setVisible(hasStorage);
-    ui->sEdit->setVisible(hasStorage);
-
-    // 5. [核心修改] 介质参数可见性配置
+    // C. 介质参数可见性
     bool hasInnerParams = false;
     bool hasOuterParams = false;
 
-    if (m_type <= 17) {
-        // --- Model 1-18 ---
-        // 内区双孔: 1-6 (0-5), 13-18 (12-17)
-        if (m_type <= 5 || (m_type >= 12 && m_type <= 17)) hasInnerParams = true;
-        // 外区双孔: 1-6 (0-5)
-        if (m_type <= 5) hasOuterParams = true;
-    }
-    else {
-        // --- Model 19-36 ---
-        // 内区全是夹层型，需要 w1, l1
-        hasInnerParams = true;
-
-        int subId = m_type - 18;
-        // 19-24(sub 0-5): 外区夹层 -> Need
-        // 25-30(sub 6-11): 外区均质 -> No
-        // 31-36(sub 12-17): 外区双孔 -> Need
-        if (subId <= 5 || subId >= 12) hasOuterParams = true;
+    if (m_type <= 35) { // Solver 1
+        if (m_type <= 23) hasInnerParams = true; // 0-23 Inner Dual
+        if (m_type <= 11) hasOuterParams = true; // 0-11 Outer Dual
+    } else { // Solver 2
+        hasInnerParams = true; // 页岩型内区始终需要
+        int sub = m_type - 36;
+        if (sub <= 11 || sub >= 24) hasOuterParams = true; // Shale or Dual outer
     }
 
     ui->label_omga1->setVisible(hasInnerParams);
@@ -178,18 +145,15 @@ void WT_ModelWidget::initUi() {
     ui->label_omga2->setVisible(hasOuterParams);
     ui->omga2Edit->setVisible(hasOuterParams);
 
-    QLabel* labelRemda2 = parentWidget->findChild<QLabel*>("label_remda2");
-    if(labelRemda2) labelRemda2->setVisible(hasOuterParams);
-    if(editRemda2) editRemda2->setVisible(hasOuterParams);
+    ui->label_remda2->setVisible(hasOuterParams);
+    ui->remda2Edit->setVisible(hasOuterParams);
 }
 
 void WT_ModelWidget::initChart() {
     MouseZoom* plot = ui->chartWidget->getPlot();
-
     plot->setBackground(Qt::white);
     plot->axisRect()->setBackground(Qt::white);
 
-    // 设置对数坐标轴
     QSharedPointer<QCPAxisTickerLog> logTicker(new QCPAxisTickerLog);
     plot->xAxis->setScaleType(QCPAxis::stLogarithmic); plot->xAxis->setTicker(logTicker);
     plot->yAxis->setScaleType(QCPAxis::stLogarithmic); plot->yAxis->setTicker(logTicker);
@@ -231,10 +195,7 @@ void WT_ModelWidget::setupConnections() {
     connect(ui->resetButton, &QPushButton::clicked, this, &WT_ModelWidget::onResetParameters);
     connect(ui->chartWidget, &ChartWidget::exportDataTriggered, this, &WT_ModelWidget::onExportData);
     connect(ui->btnExportDataTab, &QPushButton::clicked, this, &WT_ModelWidget::onExportData);
-
     connect(ui->checkShowPoints, &QCheckBox::toggled, this, &WT_ModelWidget::onShowPointsToggled);
-
-    // 转发模型选择按钮信号
     connect(ui->btnSelectModel, &QPushButton::clicked, this, &WT_ModelWidget::requestModelSelection);
 }
 
@@ -257,13 +218,11 @@ void WT_ModelWidget::setInputText(QLineEdit* edit, double value) {
     edit->setText(QString::number(value, 'g', 8));
 }
 
-// 重置参数函数
 void WT_ModelWidget::onResetParameters() {
-    // 调用 Manager 的统一接口获取默认参数
     ModelManager mgr;
-    QMap<QString, double> defaults = mgr.getDefaultParameters(m_type);
+    QMap<QString, double> defaults = mgr.getDefaultParameters(static_cast<ModelManager::ModelType>(m_type));
 
-    // 1. 基础参数
+    // 基础参数
     setInputText(ui->phiEdit, defaults["phi"]);
     setInputText(ui->hEdit, defaults["h"]);
     setInputText(ui->rwEdit, defaults["rw"]);
@@ -271,11 +230,10 @@ void WT_ModelWidget::onResetParameters() {
     setInputText(ui->BEdit, defaults["B"]);
     setInputText(ui->CtEdit, defaults["Ct"]);
     setInputText(ui->qEdit, defaults["q"]);
-
     setInputText(ui->tEdit, 1000.0);
     setInputText(ui->pointsEdit, 100);
 
-    // 2. 模型参数
+    // 模型参数
     setInputText(ui->kfEdit, defaults["kf"]);
     setInputText(ui->kmEdit, defaults["M12"]);
     setInputText(ui->LEdit, defaults["L"]);
@@ -286,27 +244,26 @@ void WT_ModelWidget::onResetParameters() {
     setInputText(ui->omga1Edit, defaults.value("omega1", 0.0));
     setInputText(ui->omga2Edit, defaults.value("omega2", 0.0));
     setInputText(ui->remda1Edit, defaults.value("lambda1", 0.0));
-
-    QLineEdit* editRemda2 = this->findChild<QLineEdit*>("remda2Edit");
-    if(editRemda2) setInputText(editRemda2, defaults.value("lambda2", 0.0));
-
-    QLineEdit* editEta12 = this->findChild<QLineEdit*>("eta12Edit");
-    if(editEta12) setInputText(editEta12, defaults.value("eta12", 0.2));
-
     setInputText(ui->gamaDEdit, defaults.value("gamaD", 0.02));
+
+    setInputText(ui->remda2Edit, defaults.value("lambda2", 0.0));
+    setInputText(ui->eta12Edit, defaults.value("eta12", 0.2));
+
+    // [新增] 变井储参数回显
+    setInputText(ui->alphaEdit, defaults.value("alpha", 0.1));
+    setInputText(ui->cPhiEdit, defaults.value("C_phi", 1e-4));
 
     if (ui->reDEdit->isVisible()) {
         setInputText(ui->reDEdit, defaults.value("re", 20000.0));
     }
 
     if (ui->cDEdit->isVisible()) {
-        setInputText(ui->cDEdit, 0.1); // CD
+        setInputText(ui->cDEdit, 0.1);
         setInputText(ui->sEdit, defaults.value("S", 0.0));
     }
 }
 
-void WT_ModelWidget::onDependentParamsChanged() {
-}
+void WT_ModelWidget::onDependentParamsChanged() {}
 
 void WT_ModelWidget::onShowPointsToggled(bool checked) {
     MouseZoom* plot = ui->chartWidget->getPlot();
@@ -330,10 +287,9 @@ void WT_ModelWidget::runCalculation() {
     MouseZoom* plot = ui->chartWidget->getPlot();
     plot->clearGraphs();
 
-    // 收集界面输入参数
     QMap<QString, QVector<double>> rawParams;
 
-    // 基础参数
+    // 读取界面参数
     rawParams["phi"] = parseInput(ui->phiEdit->text());
     rawParams["h"] = parseInput(ui->hEdit->text());
     rawParams["rw"] = parseInput(ui->rwEdit->text());
@@ -343,7 +299,6 @@ void WT_ModelWidget::runCalculation() {
     rawParams["q"] = parseInput(ui->qEdit->text());
     rawParams["t"] = parseInput(ui->tEdit->text());
 
-    // 模型参数
     rawParams["kf"] = parseInput(ui->kfEdit->text());
     rawParams["M12"] = parseInput(ui->kmEdit->text());
     rawParams["L"] = parseInput(ui->LEdit->text());
@@ -355,35 +310,33 @@ void WT_ModelWidget::runCalculation() {
     rawParams["lambda1"] = parseInput(ui->remda1Edit->text());
     rawParams["gamaD"] = parseInput(ui->gamaDEdit->text());
 
-    QLineEdit* editRemda2 = this->findChild<QLineEdit*>("remda2Edit");
-    if(editRemda2) rawParams["lambda2"] = parseInput(editRemda2->text());
-    else rawParams["lambda2"] = {1e-4};
+    rawParams["lambda2"] = parseInput(ui->remda2Edit->text());
+    rawParams["eta12"] = parseInput(ui->eta12Edit->text());
 
-    QLineEdit* editEta12 = this->findChild<QLineEdit*>("eta12Edit");
-    if(editEta12) rawParams["eta12"] = parseInput(editEta12->text());
-    else rawParams["eta12"] = {0.2};
+    // [新增] 读取变井储参数
+    if (ui->alphaEdit->isVisible()) rawParams["alpha"] = parseInput(ui->alphaEdit->text());
+    else rawParams["alpha"] = {0.1};
+
+    if (ui->cPhiEdit->isVisible()) rawParams["C_phi"] = parseInput(ui->cPhiEdit->text());
+    else rawParams["C_phi"] = {1e-4};
 
     if (ui->reDEdit->isVisible()) rawParams["re"] = parseInput(ui->reDEdit->text());
     else rawParams["re"] = {20000.0};
 
-    // 井储参数处理 (C -> cD 转换)
+    // 井储系数 C -> cD 转换
     if (ui->cDEdit->isVisible()) {
         QVector<double> C_vals = parseInput(ui->cDEdit->text());
         QVector<double> cD_vals;
 
-        // CD = 0.159 * C / (phi * h * Ct * L^2)
         double phi = rawParams["phi"].isEmpty() ? 0.05 : rawParams["phi"].first();
         double Ct = rawParams["Ct"].isEmpty() ? 5e-4 : rawParams["Ct"].first();
         double h = rawParams["h"].isEmpty() ? 20.0 : rawParams["h"].first();
         double L = rawParams["L"].isEmpty() ? 1000.0 : rawParams["L"].first();
 
         double denom = phi * h * Ct * L * L;
-        double factor = 0.0;
-        if (denom > 1e-20) factor = 0.159 / denom;
+        double factor = (denom > 1e-20) ? 0.159 / denom : 0.0;
 
-        for(double valC : C_vals) {
-            cD_vals.append(valC * factor);
-        }
+        for(double valC : C_vals) cD_vals.append(valC * factor);
 
         rawParams["cD"] = cD_vals;
         rawParams["S"] = parseInput(ui->sEdit->text());
@@ -392,7 +345,7 @@ void WT_ModelWidget::runCalculation() {
         rawParams["S"] = {0.0};
     }
 
-    // 敏感性分析检查
+    // 敏感性分析逻辑
     QString sensitivityKey = "";
     QVector<double> sensitivityValues;
     for(auto it = rawParams.begin(); it != rawParams.end(); ++it) {
@@ -405,23 +358,16 @@ void WT_ModelWidget::runCalculation() {
     }
     bool isSensitivity = !sensitivityKey.isEmpty();
 
-    // 构建基础参数字典
     QMap<QString, double> baseParams;
     for(auto it = rawParams.begin(); it != rawParams.end(); ++it) {
         baseParams[it.key()] = it.value().isEmpty() ? 0.0 : it.value().first();
     }
-
     baseParams["N"] = m_highPrecision ? 10.0 : 4.0;
-
-    // 内部计算 LfD
     if(baseParams["L"] > 1e-9) baseParams["LfD"] = baseParams["Lf"] / baseParams["L"];
-    else baseParams["LfD"] = 0.0;
 
-    // 生成时间序列
     int nPoints = ui->pointsEdit->text().toInt();
     if(nPoints < 5) nPoints = 5;
     double maxTime = baseParams.value("t", 1000.0);
-    if(maxTime < 1e-3) maxTime = 1000.0;
     QVector<double> t = ModelManager::generateLogTimeSteps(nPoints, -3.0, log10(maxTime));
 
     int iterations = isSensitivity ? sensitivityValues.size() : 1;
@@ -430,34 +376,27 @@ void WT_ModelWidget::runCalculation() {
     QString resultTextHeader = QString("计算完成 (%1)\n").arg(getModelName());
     if(isSensitivity) resultTextHeader += QString("敏感性参数: %1\n").arg(sensitivityKey);
 
-    // 循环计算
     for(int i = 0; i < iterations; ++i) {
         QMap<QString, double> currentParams = baseParams;
         double val = 0;
         if (isSensitivity) {
             val = sensitivityValues[i];
             currentParams[sensitivityKey] = val;
-
             if (sensitivityKey == "L" || sensitivityKey == "Lf") {
                 if(currentParams["L"] > 1e-9) currentParams["LfD"] = currentParams["Lf"] / currentParams["L"];
             }
         }
 
         ModelCurveData res = calculateTheoreticalCurve(currentParams, t);
-
         res_tD = std::get<0>(res);
         res_pD = std::get<1>(res);
         res_dpD = std::get<2>(res);
 
         QColor curveColor = isSensitivity ? m_colorList[i] : Qt::red;
-        QString legendName;
-        if (isSensitivity) legendName = QString("%1 = %2").arg(sensitivityKey).arg(val);
-        else legendName = "理论曲线";
-
+        QString legendName = isSensitivity ? QString("%1 = %2").arg(sensitivityKey).arg(val) : "理论曲线";
         plotCurve(res, legendName, curveColor, isSensitivity);
     }
 
-    // 更新结果
     QString resultText = resultTextHeader;
     resultText += "t(h)\t\tDp(MPa)\t\tdDp(MPa)\n";
     for(int i=0; i<res_pD.size(); ++i) {
@@ -466,17 +405,13 @@ void WT_ModelWidget::runCalculation() {
     ui->resultTextEdit->setText(resultText);
 
     ui->chartWidget->getPlot()->rescaleAxes();
-    if(plot->xAxis->range().lower <= 0) plot->xAxis->setRangeLower(1e-3);
-    if(plot->yAxis->range().lower <= 0) plot->yAxis->setRangeLower(1e-3);
     plot->replot();
-
     onShowPointsToggled(ui->checkShowPoints->isChecked());
     emit calculationCompleted(getModelName(), baseParams);
 }
 
 void WT_ModelWidget::plotCurve(const ModelCurveData& data, const QString& name, QColor color, bool isSensitivity) {
     MouseZoom* plot = ui->chartWidget->getPlot();
-
     const QVector<double>& t = std::get<0>(data);
     const QVector<double>& p = std::get<1>(data);
     const QVector<double>& d = std::get<2>(data);
