@@ -30,7 +30,6 @@
       <item row="0" column="1">
        <widget class="QComboBox" name="comboWellModel"/>
       </item>
-
       <item row="1" column="0">
        <widget class="QLabel" name="label_2">
         <property name="text">
@@ -41,7 +40,6 @@
       <item row="1" column="1">
        <widget class="QComboBox" name="comboReservoirModel"/>
       </item>
-
       <item row="2" column="0">
        <widget class="QLabel" name="label_3">
         <property name="text">
@@ -52,18 +50,16 @@
       <item row="2" column="1">
        <widget class="QComboBox" name="comboBoundary"/>
       </item>
-
       <item row="3" column="0">
        <widget class="QLabel" name="label_4">
         <property name="text">
-         <string>井储表皮:</string>
+         <string>井储模型:</string>
         </property>
        </widget>
       </item>
       <item row="3" column="1">
        <widget class="QComboBox" name="comboStorage"/>
       </item>
-
       <item row="4" column="0">
        <widget class="QLabel" name="label_InnerOuter">
         <property name="text">
@@ -96,7 +92,7 @@
         </property>
        </widget>
       </item>
-      </layout>
+     </layout>
     </widget>
    </item>
    <item>

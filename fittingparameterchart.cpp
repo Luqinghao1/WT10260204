@@ -2,8 +2,9 @@
  * 文件名: fittingparameterchart.cpp
  * 文件作用: 拟合参数图表管理类实现文件
  * 修改记录:
- * 1. 提取 generateDefaultParams 和 adjustLimits 为静态方法，供弹窗共用。
- * 2. 优化了参数生成逻辑结构。
+ * 1. [修复] 修正了井储类型的判断逻辑，现在 Fair 和 Hegeman 模型能正确显示基础井储参数 (C, S)。
+ * 2. [新增] 增加了对 Fair/Hegeman 模型的变井储参数 (alpha, C_phi) 的支持。
+ * 3. [修复] 变井储参数默认不参与拟合 (isFit = false)。
  */
 
 #include "fittingparameterchart.h"
@@ -17,26 +18,22 @@
 #include <algorithm>
 #include <cmath>
 
-// 引入 ModelSolver 头文件以访问枚举值
 #include "modelsolver01-06.h"
 
 FittingParameterChart::FittingParameterChart(QTableWidget *parentTable, QObject *parent)
     : QObject(parent), m_table(parentTable), m_modelManager(nullptr)
 {
-    // 初始化滚轮防抖定时器
     m_wheelTimer = new QTimer(this);
     m_wheelTimer->setSingleShot(true);
-    m_wheelTimer->setInterval(200); // 200ms 延迟触发重绘
+    m_wheelTimer->setInterval(200);
     connect(m_wheelTimer, &QTimer::timeout, this, &FittingParameterChart::onWheelDebounceTimeout);
 
     if(m_table) {
-        // 配置表格列头
         QStringList headers;
         headers << "序号" << "参数名称" << "数值" << "单位";
         m_table->setColumnCount(headers.size());
         m_table->setHorizontalHeaderLabels(headers);
 
-        // 设置表头样式
         m_table->horizontalHeader()->setStyleSheet(
             "QHeaderView::section { background-color: #E0E0E0; color: black; font-weight: bold; border: 1px solid #A0A0A0; }"
             );
@@ -44,15 +41,14 @@ FittingParameterChart::FittingParameterChart(QTableWidget *parentTable, QObject 
         m_table->horizontalHeader()->setSectionResizeMode(QHeaderView::Interactive);
         m_table->horizontalHeader()->setStretchLastSection(true);
 
-        m_table->setColumnWidth(0, 40);  // 序号列
-        m_table->setColumnWidth(1, 160); // 名称列
-        m_table->setColumnWidth(2, 80);  // 数值列
+        m_table->setColumnWidth(0, 40);
+        m_table->setColumnWidth(1, 160);
+        m_table->setColumnWidth(2, 80);
 
         m_table->setSelectionBehavior(QAbstractItemView::SelectRows);
         m_table->setAlternatingRowColors(false);
         m_table->verticalHeader()->setVisible(false);
 
-        // 安装事件过滤器用于滚轮支持
         m_table->viewport()->installEventFilter(this);
         connect(m_table, &QTableWidget::itemChanged, this, &FittingParameterChart::onTableItemChanged);
     }
@@ -60,20 +56,17 @@ FittingParameterChart::FittingParameterChart(QTableWidget *parentTable, QObject 
 
 bool FittingParameterChart::eventFilter(QObject *watched, QEvent *event)
 {
-    // 处理滚轮事件：当鼠标悬停在数值列时，可以通过滚轮调节数值
     if (watched == m_table->viewport() && event->type() == QEvent::Wheel) {
         QWheelEvent *wheelEvent = static_cast<QWheelEvent*>(event);
         QPoint pos = wheelEvent->position().toPoint();
         QTableWidgetItem *item = m_table->itemAt(pos);
 
-        // 仅在第2列(数值列)生效
         if (item && item->column() == 2) {
             int row = item->row();
             QTableWidgetItem *keyItem = m_table->item(row, 1);
             if (!keyItem) return false;
             QString paramName = keyItem->data(Qt::UserRole).toString();
 
-            // LfD 是计算出来的，不允许直接修改
             if (paramName == "LfD") return true;
 
             FitParameter *targetParam = nullptr;
@@ -86,24 +79,22 @@ bool FittingParameterChart::eventFilter(QObject *watched, QEvent *event)
 
             if (targetParam) {
                 QString currentText = item->text();
-                // 如果是敏感性分析的逗号分隔值，禁止滚轮修改
                 if (currentText.contains(',') || currentText.contains(QChar(0xFF0C))) return false;
 
                 bool ok;
                 double currentVal = currentText.toDouble(&ok);
                 if (ok) {
-                    int steps = wheelEvent->angleDelta().y() / 120; // 滚轮刻度
+                    int steps = wheelEvent->angleDelta().y() / 120;
                     double newVal = currentVal + steps * targetParam->step;
 
-                    // 范围限制
                     if (targetParam->max > targetParam->min) {
                         if (newVal < targetParam->min) newVal = targetParam->min;
                         if (newVal > targetParam->max) newVal = targetParam->max;
                     }
                     item->setText(QString::number(newVal, 'g', 6));
                     targetParam->value = newVal;
-                    m_wheelTimer->start(); // 重置定时器
-                    return true; // 拦截事件，防止表格滚动
+                    m_wheelTimer->start();
+                    return true;
                 }
             }
         }
@@ -125,13 +116,11 @@ void FittingParameterChart::onTableItemChanged(QTableWidgetItem *item)
 
     QString changedKey = keyItem->data(Qt::UserRole).toString();
 
-    // 联动逻辑：当 L 或 Lf 改变时，自动更新 LfD (无因次缝长)
     if (changedKey == "L" || changedKey == "Lf") {
         double valL = 0.0;
         double valLf = 0.0;
         QTableWidgetItem* itemLfD = nullptr;
 
-        // 遍历查找相关项
         for(int i = 0; i < m_table->rowCount(); ++i) {
             QTableWidgetItem* k = m_table->item(i, 1);
             QTableWidgetItem* v = m_table->item(i, 2);
@@ -149,10 +138,8 @@ void FittingParameterChart::onTableItemChanged(QTableWidgetItem *item)
                 m_table->blockSignals(true);
                 itemLfD->setText(QString::number(newLfD, 'g', 6));
                 m_table->blockSignals(false);
-                // 同步更新内部数据
                 for(auto& p : m_params) { if(p.name == "LfD") { p.value = newLfD; break; } }
             }
-            // 触发防抖更新图表
             if(!m_wheelTimer->isActive()) m_wheelTimer->start();
         }
     }
@@ -170,8 +157,10 @@ QStringList FittingParameterChart::getDefaultFitKeys(ModelManager::ModelType typ
     // 基础核心参数
     keys << "kf" << "M12" << "L" << "Lf" << "nf" << "rm";
 
-    // 判断是否为均质模型 (7-12)
-    bool isHomogeneous = (type >= ModelSolver01_06::Model_7 && type <= ModelSolver01_06::Model_12);
+    int t = static_cast<int>(type);
+
+    // 判断是否为均质模型 (Group1 的 7-12)
+    bool isHomogeneous = (t >= (int)ModelSolver01_06::Model_7 && t <= (int)ModelSolver01_06::Model_12);
 
     if (!isHomogeneous) {
         keys << "omega1" << "omega2" << "lambda1" << "lambda2";
@@ -180,17 +169,23 @@ QStringList FittingParameterChart::getDefaultFitKeys(ModelManager::ModelType typ
     // 所有复合模型都包含 eta12
     keys << "eta12";
 
-    // 判断是否考虑井储 (偶数ID为Consider)
-    bool hasStorage = ((int)type % 2 == 0);
-    if (hasStorage) {
+    // 判断井储类型 (0:Const, 1:Line, 2:Fair, 3:Hegeman)
+    int storageType = t % 4;
+
+    // [修正] 线源解(1) 不需要 C,S，其他(0, 2, 3)都需要
+    if (storageType != 1) {
         keys << "C" << "S";
     }
 
+    // [新增] Fair(2) 和 Hegeman(3) 需要变井储参数
+    if (storageType == 2 || storageType == 3) {
+        keys << "alpha" << "C_phi";
+    }
+
     // 判断是否显示边界半径 re
-    // 无限大边界: 1, 2, 7, 8 -> 不显示 re
-    bool isInfinite = (type == ModelSolver01_06::Model_1 || type == ModelSolver01_06::Model_2 ||
-                       type == ModelSolver01_06::Model_7 || type == ModelSolver01_06::Model_8);
-    if (!isInfinite) {
+    // 无限大边界: 0-3
+    int groupIdx = t % 12;
+    if (groupIdx >= 4) {
         keys << "re";
     }
 
@@ -202,19 +197,20 @@ QList<FitParameter> FittingParameterChart::generateDefaultParams(ModelManager::M
 {
     QList<FitParameter> params;
 
-    // 辅助lambda
     auto addParam = [&](QString name, double val, bool isFitDefault) {
         FitParameter p;
         p.name = name;
         p.value = val;
         p.isFit = isFitDefault;
         p.isVisible = true;
-        p.min = 0; p.max = 0; p.step = 0; // 后续自动计算
+        p.min = 0; p.max = 0; p.step = 0;
 
         QString symbol, uniSym, unit;
         getParamDisplayInfo(p.name, p.displayName, symbol, uniSym, unit);
         params.append(p);
     };
+
+    int t = static_cast<int>(type);
 
     // 1. 基础物理参数
     addParam("phi", 0.05, false);
@@ -234,17 +230,16 @@ QList<FitParameter> FittingParameterChart::generateDefaultParams(ModelManager::M
     addParam("L", valL, true);
     addParam("Lf", 20.0, true);
     addParam("nf", 4.0, true);
-    addParam("rm", valL, true); // 默认复合半径等于井长
+    addParam("rm", valL, true);
 
     // 3. 边界半径
-    bool isInfinite = (type == ModelSolver01_06::Model_1 || type == ModelSolver01_06::Model_2 ||
-                       type == ModelSolver01_06::Model_7 || type == ModelSolver01_06::Model_8);
-    if(!isInfinite) {
+    int groupIdx = t % 12;
+    if(groupIdx >= 4) {
         addParam("re", 20000.0, true);
     }
 
     // 4. 双重介质参数 (1-6)
-    bool isHomogeneous = (type >= ModelSolver01_06::Model_7 && type <= ModelSolver01_06::Model_12);
+    bool isHomogeneous = (t >= (int)ModelSolver01_06::Model_7 && t <= (int)ModelSolver01_06::Model_12);
     if (!isHomogeneous) {
         addParam("omega1", 0.4, true);
         addParam("omega2", 0.08, true);
@@ -252,11 +247,17 @@ QList<FitParameter> FittingParameterChart::generateDefaultParams(ModelManager::M
         addParam("lambda2", 1e-4, true);
     }
 
-    // 5. 井储与表皮 (偶数ID)
-    bool hasStorage = ((int)type % 2 == 0);
-    if(hasStorage) {
+    // 5. 井储与表皮
+    int storageType = t % 4;
+    if(storageType != 1) { // 非线源解
         addParam("C", 0.01, true);
         addParam("S", 0.01, true);
+    }
+
+    // [新增] 变井储参数 (默认不拟合)
+    if (storageType == 2 || storageType == 3) {
+        addParam("alpha", 0.1, false); // isFit = false
+        addParam("C_phi", 1e-4, false); // isFit = false
     }
 
     // 6. 其他参数
@@ -281,11 +282,10 @@ QList<FitParameter> FittingParameterChart::generateDefaultParams(ModelManager::M
 void FittingParameterChart::adjustLimits(QList<FitParameter>& params)
 {
     for(auto& p : params) {
-        if(p.name == "LfD") continue; // 辅助参数不设限
+        if(p.name == "LfD") continue;
 
         double val = p.value;
 
-        // 通用范围计算：当前值的 0.1倍 到 10倍
         if (std::abs(val) > 1e-15) {
             if (val > 0) {
                 p.min = val * 0.1;
@@ -299,34 +299,30 @@ void FittingParameterChart::adjustLimits(QList<FitParameter>& params)
             p.max = 1.0;
         }
 
-        // 特殊参数微调
         if (p.name == "phi" || p.name.startsWith("omega") || p.name == "eta12") {
-            if (p.max > 1.0) p.max = 1.0; // 分数不能大于1
+            if (p.max > 1.0) p.max = 1.0;
             if (p.min < 0.0) p.min = 0.0001;
         }
 
-        // 确保物理参数非负
         if (p.name == "kf" || p.name == "M12" || p.name == "L" || p.name == "Lf" ||
             p.name == "rm" || p.name == "re" || p.name.startsWith("lambda") ||
             p.name == "h" || p.name == "rw" || p.name == "mu" || p.name == "B" ||
-            p.name == "Ct" || p.name == "C" || p.name == "q") {
+            p.name == "Ct" || p.name == "C" || p.name == "q" ||
+            p.name == "alpha" || p.name == "C_phi") { // [新增]
             if (p.min <= 0.0) p.min = std::abs(val) * 0.01;
             if (p.min <= 1e-20) p.min = 1e-6;
         }
 
-        // 裂缝条数为整数
         if (p.name == "nf") {
             if (p.min < 1.0) p.min = 1.0;
             p.min = std::ceil(p.min);
             p.max = std::floor(p.max);
         }
 
-        // 表皮系数可以是负数
         if (p.name == "S" && std::abs(val) < 1e-9) {
             p.min = -5.0; p.max = 20.0;
         }
 
-        // 计算步长：范围的 1/20，取整到 nice number
         double range = p.max - p.min;
         if (range > 1e-20) {
             double rawStep = range / 20.0;
@@ -343,10 +339,8 @@ void FittingParameterChart::adjustLimits(QList<FitParameter>& params)
     }
 }
 
-// [核心方法] 重置参数列表
 void FittingParameterChart::resetParams(ModelManager::ModelType type, bool preserveStates)
 {
-    // 1. 备份状态
     QMap<QString, QPair<bool, bool>> stateBackup;
     if (preserveStates) {
         for(const auto& p : m_params) {
@@ -354,10 +348,8 @@ void FittingParameterChart::resetParams(ModelManager::ModelType type, bool prese
         }
     }
 
-    // 2. 生成默认参数
     m_params = generateDefaultParams(type);
 
-    // 3. 恢复状态
     if (preserveStates) {
         for(auto& p : m_params) {
             if(stateBackup.contains(p.name)) {
@@ -367,14 +359,12 @@ void FittingParameterChart::resetParams(ModelManager::ModelType type, bool prese
         }
     }
 
-    // 4. 自动计算上下限并刷新
     autoAdjustLimits();
     refreshParamTable();
 }
 
 void FittingParameterChart::autoAdjustLimits()
 {
-    // 调用静态方法计算
     adjustLimits(m_params);
 }
 
@@ -383,22 +373,17 @@ void FittingParameterChart::setParameters(const QList<FitParameter> &params) { m
 
 void FittingParameterChart::switchModel(ModelManager::ModelType newType)
 {
-    // 切换模型时，先暂存当前各参数的值
     QMap<QString, double> oldValues;
     for(const auto& p : m_params) oldValues.insert(p.name, p.value);
 
-    // 重置为新模型的默认列表 (不保留Fit状态)
     resetParams(newType, false);
 
-    // 恢复旧值
     for(auto& p : m_params) {
         if(oldValues.contains(p.name)) p.value = oldValues[p.name];
     }
 
-    // 重新计算上下限
     autoAdjustLimits();
 
-    // 特殊逻辑：校验复合半径和 LfD
     double currentL = 1000.0;
     for(const auto& p : m_params) if(p.name == "L") currentL = p.value;
 
@@ -429,7 +414,6 @@ void FittingParameterChart::updateParamsFromTable()
         QString text = itemVal->text();
         double val = 0.0;
 
-        // 支持逗号分隔的敏感性分析输入
         if (text.contains(',') || text.contains(QChar(0xFF0C))) {
             QString firstPart = text.split(QRegularExpression("[,，]"), Qt::SkipEmptyParts).first();
             val = firstPart.toDouble();
@@ -465,7 +449,6 @@ void FittingParameterChart::refreshParamTable()
     m_table->setRowCount(0);
     int serialNo = 1;
 
-    // 分两批显示：先显示勾选拟合的，再显示未勾选的
     for(const auto& p : m_params) {
         if(p.isVisible && p.isFit) addRowToTable(p, serialNo, true);
     }
@@ -481,18 +464,15 @@ void FittingParameterChart::addRowToTable(const FitParameter& p, int& serialNo, 
     int row = m_table->rowCount();
     m_table->insertRow(row);
 
-    // 高亮色背景
     QColor bgColor = highlight ? QColor(255, 255, 224) : Qt::white;
     if (p.name == "LfD") bgColor = QColor(245, 245, 245);
 
-    // 1. 序号
     QTableWidgetItem* numItem = new QTableWidgetItem(QString::number(serialNo++));
     numItem->setFlags(numItem->flags() & ~Qt::ItemIsEditable);
     numItem->setTextAlignment(Qt::AlignCenter);
     numItem->setBackground(bgColor);
     m_table->setItem(row, 0, numItem);
 
-    // 2. 参数名 (显示名 + 英文名)
     QString displayNameFull = QString("%1 (%2)").arg(p.displayName).arg(p.name);
     QTableWidgetItem* nameItem = new QTableWidgetItem(displayNameFull);
     nameItem->setFlags(nameItem->flags() & ~Qt::ItemIsEditable);
@@ -501,7 +481,6 @@ void FittingParameterChart::addRowToTable(const FitParameter& p, int& serialNo, 
     if(highlight) { QFont f = nameItem->font(); f.setBold(true); nameItem->setFont(f); }
     m_table->setItem(row, 1, nameItem);
 
-    // 3. 数值
     QTableWidgetItem* valItem = new QTableWidgetItem(QString::number(p.value, 'g', 6));
     valItem->setBackground(bgColor);
     if(highlight) { QFont f = valItem->font(); f.setBold(true); valItem->setFont(f); }
@@ -511,7 +490,6 @@ void FittingParameterChart::addRowToTable(const FitParameter& p, int& serialNo, 
     }
     m_table->setItem(row, 2, valItem);
 
-    // 4. 单位
     QString dummy, symbol, uniSym, unit;
     getParamDisplayInfo(p.name, dummy, symbol, uniSym, unit);
     if(unit == "无因次" || unit == "小数") unit = "-";
@@ -523,7 +501,6 @@ void FittingParameterChart::addRowToTable(const FitParameter& p, int& serialNo, 
 
 void FittingParameterChart::getParamDisplayInfo(const QString &name, QString &chName, QString &symbol, QString &uniSym, QString &unit)
 {
-    // 集中管理参数的显示信息
     if(name == "kf")          { chName = "内区渗透率";     unit = "D"; }
     else if(name == "M12")    { chName = "流度比";         unit = "无因次"; }
     else if(name == "L")      { chName = "水平井长";       unit = "m"; }
@@ -548,6 +525,8 @@ void FittingParameterChart::getParamDisplayInfo(const QString &name, QString &ch
     else if(name == "S")      { chName = "表皮系数";       unit = "无因次"; }
     else if(name == "gamaD")  { chName = "压敏系数";       unit = "无因次"; }
     else if(name == "LfD")    { chName = "无因次缝长";     unit = "无因次"; }
+    else if(name == "alpha")  { chName = "变井储时间参数"; unit = "h"; } // [新增]
+    else if(name == "C_phi")  { chName = "变井储压力参数"; unit = "MPa"; } // [新增]
     else { chName = name; unit = ""; }
 
     symbol = name;

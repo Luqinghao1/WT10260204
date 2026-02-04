@@ -2,141 +2,142 @@
  * 文件名: modelmanager.h
  * 文件作用: 模型管理类头文件
  * 功能描述:
- * 1. 系统核心控制器：统一管理所有试井模型界面 (WT_ModelWidget) 和求解器。
- * 2. 模型定义：定义了 Model_1 到 Model_36 共36种模型的唯一标识。
- * 3. 资源管理：采用惰性初始化策略管理两组求解器 (ModelSolver01_06 和 ModelSolver19_36)。
- * 4. 接口封装：提供统一的理论曲线计算、默认参数获取、观测数据缓存接口。
+ * 1. 作为核心控制类，管理所有试井模型的生命周期和计算调度。
+ * 2. 维护模型列表（共72个），负责实例化对应的 UI 控件和计算求解器。
+ * 3. 提供统一的接口 calculateTheoreticalCurve 供外部调用，内部自动分发给 Solver1 或 Solver2。
+ * 4. 提供 getDefaultParameters 接口，根据模型类型返回预设的物理参数（含新增的变井储参数）。
  */
 
 #ifndef MODELMANAGER_H
 #define MODELMANAGER_H
 
 #include <QObject>
-#include <QMap>
 #include <QVector>
+#include <QMap>
 #include <QStackedWidget>
 #include "wt_modelwidget.h"
-#include "modelsolver01-06.h"
-#include "modelsolver19_36.h" // [新增] 引入夹层型模型求解器头文件
+
+// 前向声明求解器类
+class ModelSolver01_06;
+class ModelSolver19_36;
+
+// 定义曲线数据类型
+using ModelCurveData = std::tuple<QVector<double>, QVector<double>, QVector<double>>;
 
 class ModelManager : public QObject
 {
     Q_OBJECT
 
 public:
-    // [修改] 使用 int 作为通用的模型类型标识，以支持扩展到 36 个模型
-    // 0-17 对应 ModelSolver01_06, 18-35 对应 ModelSolver19_36
-    using ModelType = int;
+    // 全局模型枚举 (Model 1-72)
+    // 1-36: Solver1 (夹层/径向复合)
+    // 37-72: Solver2 (页岩型)
+    enum ModelType {
+        // --- Solver 1 ---
+        Model_1 = 0, Model_2, Model_3, Model_4, Model_5, Model_6,
+        Model_7, Model_8, Model_9, Model_10, Model_11, Model_12,
+        Model_13, Model_14, Model_15, Model_16, Model_17, Model_18,
+        Model_19, Model_20, Model_21, Model_22, Model_23, Model_24,
+        Model_25, Model_26, Model_27, Model_28, Model_29, Model_30,
+        Model_31, Model_32, Model_33, Model_34, Model_35, Model_36,
 
-    // --- 现有模型 1-18 (对应 ID 0-17) ---
-    static const int Model_1 = 0;
-    static const int Model_2 = 1;
-    static const int Model_3 = 2;
-    static const int Model_4 = 3;
-    static const int Model_5 = 4;
-    static const int Model_6 = 5;
-    static const int Model_7 = 6;
-    static const int Model_8 = 7;
-    static const int Model_9 = 8;
-    static const int Model_10 = 9;
-    static const int Model_11 = 10;
-    static const int Model_12 = 11;
-    static const int Model_13 = 12;
-    static const int Model_14 = 13;
-    static const int Model_15 = 14;
-    static const int Model_16 = 15;
-    static const int Model_17 = 16;
-    static const int Model_18 = 17;
-
-    // --- [新增] 新增模型 19-36 (对应 ID 18-35) ---
-    static const int Model_19 = 18;
-    static const int Model_20 = 19;
-    static const int Model_21 = 20;
-    static const int Model_22 = 21;
-    static const int Model_23 = 22;
-    static const int Model_24 = 23;
-    static const int Model_25 = 24;
-    static const int Model_26 = 25;
-    static const int Model_27 = 26;
-    static const int Model_28 = 27;
-    static const int Model_29 = 28;
-    static const int Model_30 = 29;
-    static const int Model_31 = 30;
-    static const int Model_32 = 31;
-    static const int Model_33 = 32;
-    static const int Model_34 = 33;
-    static const int Model_35 = 34;
-    static const int Model_36 = 35;
+        // --- Solver 2 ---
+        Model_37, Model_38, Model_39, Model_40, Model_41, Model_42,
+        Model_43, Model_44, Model_45, Model_46, Model_47, Model_48,
+        Model_49, Model_50, Model_51, Model_52, Model_53, Model_54,
+        Model_55, Model_56, Model_57, Model_58, Model_59, Model_60,
+        Model_61, Model_62, Model_63, Model_64, Model_65, Model_66,
+        Model_67, Model_68, Model_69, Model_70, Model_71, Model_72
+    };
 
     explicit ModelManager(QWidget* parent = nullptr);
     ~ModelManager();
 
-    // 初始化模型界面和堆栈窗口
+    /**
+     * @brief 初始化模型模块
+     * @param parentWidget 父挂载点
+     */
     void initializeModels(QWidget* parentWidget);
 
-    // 切换当前显示的模型
+    /**
+     * @brief 切换当前激活的模型
+     * @param modelType 模型枚举 ID
+     */
     void switchToModel(ModelType modelType);
 
-    // 获取模型名称 (静态方法)
-    static QString getModelTypeName(ModelType type);
+    /**
+     * @brief 获取当前模型类型
+     */
+    ModelType getCurrentModelType() const { return m_currentModelType; }
 
-    // [核心接口] 计算理论曲线 (内部自动分发给对应的求解器)
-    ModelCurveData calculateTheoreticalCurve(ModelType type, const QMap<QString, double>& params, const QVector<double>& providedTime = QVector<double>());
+    /**
+     * @brief 计算理论曲线（核心接口）
+     * 自动根据 ID 分发给 Solver1 或 Solver2
+     */
+    ModelCurveData calculateTheoreticalCurve(ModelType type,
+                                             const QMap<QString, double>& params,
+                                             const QVector<double>& providedTime = QVector<double>());
 
-    // 获取指定模型的默认参数配置
+    /**
+     * @brief 获取模型默认参数
+     * 根据模型类型预设合理的参数值（包含 alpha, C_phi 等）
+     */
     QMap<QString, double> getDefaultParameters(ModelType type);
 
-    // 设置全局高精度模式
+    /**
+     * @brief 获取模型名称
+     */
+    static QString getModelTypeName(ModelType type);
+
+    /**
+     * @brief 设置高精度模式
+     */
     void setHighPrecision(bool high);
 
-    // 更新所有模型的显示参数 (例如当全局单位或物理属性改变时)
+    /**
+     * @brief 强制更新所有模型的参数显示
+     */
     void updateAllModelsBasicParameters();
-
-    // 生成对数时间步长 (辅助工具)
-    static QVector<double> generateLogTimeSteps(int count, double startExp, double endExp);
 
     // --- 观测数据缓存管理 ---
     void setObservedData(const QVector<double>& t, const QVector<double>& p, const QVector<double>& d);
     void getObservedData(QVector<double>& t, QVector<double>& p, QVector<double>& d) const;
-    bool hasObservedData() const;
     void clearCache();
+    bool hasObservedData() const;
+
+    // 工具函数：生成时间步
+    static QVector<double> generateLogTimeSteps(int count, double startExp, double endExp);
 
 signals:
-    // 模型切换信号
-    void modelSwitched(ModelType newType, ModelType oldType);
-    // 计算完成信号
-    void calculationCompleted(const QString& analysisType, const QMap<QString, double>& results);
+    void modelSwitched(ModelType newModel, ModelType oldModel);
+    void calculationCompleted(const QString& title, const QMap<QString, double>& results);
 
-private slots:
-    // 响应界面上的"选择模型"按钮点击
+public slots:
+    // 响应界面上的"选择模型"按钮
     void onSelectModelClicked();
-    // 响应单个 Widget 计算完成
-    void onWidgetCalculationCompleted(const QString& t, const QMap<QString, double>& r);
+    // 响应子界面的计算完成信号
+    void onWidgetCalculationCompleted(const QString& title, const QMap<QString, double>& results);
 
 private:
-    // 创建主容器 Widget
     void createMainWidget();
-
-    // 确保指定类型的界面 Widget 已创建 (惰性加载)
+    // 懒加载获取 UI 控件
     WT_ModelWidget* ensureWidget(ModelType type);
-
-    // [修改] 内部辅助函数：获取第一组求解器 (Model 1-18)
-    ModelSolver01_06* ensureSolverGroup1(int index);
-
-    // [新增] 内部辅助函数：获取第二组求解器 (Model 19-36)
-    ModelSolver19_36* ensureSolverGroup2(int index);
+    // 懒加载获取求解器
+    ModelSolver01_06* ensureSolverGroup1(int index); // index 0-35
+    ModelSolver19_36* ensureSolverGroup2(int index); // index 0-35
 
 private:
-    QWidget* m_mainWidget;            // 主容器
-    QStackedWidget* m_modelStack;     // 堆栈窗口，用于切换模型界面
+    QWidget* m_mainWidget;
+    QStackedWidget* m_modelStack;
 
-    QVector<WT_ModelWidget*> m_modelWidgets; // 存储所有模型界面的指针容器
+    // 模型列表 (72个)
+    QVector<WT_ModelWidget*> m_modelWidgets;
 
-    // [修改] 分组存储求解器实例
-    QVector<ModelSolver01_06*> m_solversGroup1; // 对应 ID 0-17
-    QVector<ModelSolver19_36*> m_solversGroup2; // 对应 ID 18-35
+    // 求解器组
+    QVector<ModelSolver01_06*> m_solversGroup1; // 对应 Model 1-36
+    QVector<ModelSolver19_36*> m_solversGroup2; // 对应 Model 37-72
 
-    ModelType m_currentModelType;     // 当前激活的模型类型
+    ModelType m_currentModelType;
 
     // 观测数据缓存
     QVector<double> m_cachedObsTime;

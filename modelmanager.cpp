@@ -1,11 +1,10 @@
 /*
  * 文件名: modelmanager.cpp
- * 文件作用: 模型管理类实现文件
+ * 文件作用: 模型管理类实现
  * 功能描述:
- * 1. 初始化并管理所有模型界面和求解器实例。
- * 2. 实现了模型计算的分发逻辑。
- * 3. [修改] 优化参数传递，直接从全局 ModelParameter 读取物理常数，
- * 并设置符合要求的模型初始猜测值。
+ * 1. 实现了72个模型的初始化管理与界面切换。
+ * 2. 实现了计算任务的分发逻辑：Model 1-36 -> Solver1, Model 37-72 -> Solver2。
+ * 3. 实现了默认参数的生成逻辑，确保新增加的 Fair/Hegeman 模型参数被正确初始化。
  */
 
 #include "modelmanager.h"
@@ -30,10 +29,12 @@ ModelManager::ModelManager(QWidget* parent)
 
 ModelManager::~ModelManager()
 {
+    // 清理求解器内存
     for(auto* s : m_solversGroup1) if(s) delete s;
     m_solversGroup1.clear();
     for(auto* s : m_solversGroup2) if(s) delete s;
     m_solversGroup2.clear();
+    // 界面控件由 Qt 父子对象机制管理，无需手动 delete
     m_modelWidgets.clear();
 }
 
@@ -43,15 +44,22 @@ void ModelManager::initializeModels(QWidget* parentWidget)
     createMainWidget();
 
     m_modelStack = new QStackedWidget(m_mainWidget);
-    m_modelWidgets.resize(36);
+
+    // [扩容] 扩展至 72 个模型槽位
+    m_modelWidgets.resize(72);
     m_modelWidgets.fill(nullptr);
 
-    m_solversGroup1.resize(18);
+    // Group 1: 0-35 (对应 Model 1-1 到 1-36)
+    m_solversGroup1.resize(36);
     m_solversGroup1.fill(nullptr);
-    m_solversGroup2.resize(18);
+
+    // Group 2: 36-71 (对应 Model 2-1 到 2-36)
+    m_solversGroup2.resize(36);
     m_solversGroup2.fill(nullptr);
 
     m_mainWidget->layout()->addWidget(m_modelStack);
+
+    // 默认加载第一个模型
     switchToModel(Model_1);
 
     if (parentWidget->layout()) parentWidget->layout()->addWidget(m_mainWidget);
@@ -71,6 +79,7 @@ void ModelManager::createMainWidget()
     m_mainWidget->setLayout(mainLayout);
 }
 
+// 懒加载 UI 控件
 WT_ModelWidget* ModelManager::ensureWidget(ModelType type)
 {
     int index = (int)type;
@@ -89,6 +98,7 @@ WT_ModelWidget* ModelManager::ensureWidget(ModelType type)
     return m_modelWidgets[index];
 }
 
+// 懒加载 Solver1
 ModelSolver01_06* ModelManager::ensureSolverGroup1(int index)
 {
     if (index < 0 || index >= m_solversGroup1.size()) return nullptr;
@@ -98,6 +108,7 @@ ModelSolver01_06* ModelManager::ensureSolverGroup1(int index)
     return m_solversGroup1[index];
 }
 
+// 懒加载 Solver2
 ModelSolver19_36* ModelManager::ensureSolverGroup2(int index)
 {
     if (index < 0 || index >= m_solversGroup2.size()) return nullptr;
@@ -120,17 +131,20 @@ void ModelManager::switchToModel(ModelType modelType)
     emit modelSwitched(modelType, old);
 }
 
+// 核心计算调度
 ModelCurveData ModelManager::calculateTheoreticalCurve(ModelType type,
                                                        const QMap<QString, double>& params,
                                                        const QVector<double>& providedTime)
 {
     int id = (int)type;
-    if (id >= 0 && id <= 17) {
+    // [调度] 0-35 分发给 Solver1 (夹层/径向)
+    if (id >= 0 && id <= 35) {
         ModelSolver01_06* solver = ensureSolverGroup1(id);
         if (solver) return solver->calculateTheoreticalCurve(params, providedTime);
     }
-    else if (id >= 18 && id <= 35) {
-        ModelSolver19_36* solver = ensureSolverGroup2(id - 18);
+    // [调度] 36-71 分发给 Solver2 (页岩)
+    else if (id >= 36 && id <= 71) {
+        ModelSolver19_36* solver = ensureSolverGroup2(id - 36);
         if (solver) return solver->calculateTheoreticalCurve(params, providedTime);
     }
     return ModelCurveData();
@@ -139,11 +153,11 @@ ModelCurveData ModelManager::calculateTheoreticalCurve(ModelType type,
 QString ModelManager::getModelTypeName(ModelType type)
 {
     int id = (int)type;
-    if (id >= 0 && id <= 17) {
+    if (id >= 0 && id <= 35) {
         return ModelSolver01_06::getModelName((ModelSolver01_06::ModelType)id);
     }
-    else if (id >= 18 && id <= 35) {
-        return ModelSolver19_36::getModelName((ModelSolver19_36::ModelType)(id - 18));
+    else if (id >= 36 && id <= 71) {
+        return ModelSolver19_36::getModelName((ModelSolver19_36::ModelType)(id - 36));
     }
     return "未知模型";
 }
@@ -152,6 +166,8 @@ void ModelManager::onSelectModelClicked()
 {
     ModelSelect dlg(m_mainWidget);
     int currentId = (int)m_currentModelType + 1;
+
+    // 传递 ID (范围 1-72) 给选择对话框回显
     QString currentCode = QString("modelwidget%1").arg(currentId);
     dlg.setCurrentModelCode(currentCode);
 
@@ -161,21 +177,20 @@ void ModelManager::onSelectModelClicked()
         numStr.remove("modelwidget");
         bool ok;
         int modelId = numStr.toInt(&ok);
-        if (ok && modelId >= 1 && modelId <= 36) {
+        // ID 范围 1-72
+        if (ok && modelId >= 1 && modelId <= 72) {
             switchToModel((ModelType)(modelId - 1));
         }
     }
 }
 
-// [修改] 获取模型默认参数
-// 1. 物理参数：从 ModelParameter 单例读取
-// 2. 模型参数：使用您指定的新默认值
+// 生成默认参数 (含新增变井储参数)
 QMap<QString, double> ModelManager::getDefaultParameters(ModelType type)
 {
     QMap<QString, double> p;
     ModelParameter* mp = ModelParameter::instance();
 
-    // 1. 基础物理参数 (来自全局设定)
+    // 1. 基础物理参数 (从全局单例获取)
     p.insert("phi", mp->getPhi());
     p.insert("h", mp->getH());
     p.insert("mu", mp->getMu());
@@ -183,124 +198,112 @@ QMap<QString, double> ModelManager::getDefaultParameters(ModelType type)
     p.insert("Ct", mp->getCt());
     p.insert("q", mp->getQ());
     p.insert("rw", mp->getRw());
+    p.insert("L", mp->getL());
+    p.insert("nf", mp->getNf());
 
-    // 水平井和裂缝参数
-    p.insert("L", mp->getL());     // 水平井长度
-    p.insert("nf", mp->getNf());   // 裂缝条数
+    // [新增] 变井储参数默认值
+    p.insert("alpha", mp->getAlpha());
+    p.insert("C_phi", mp->getCPhi());
 
-    // 2. 模型参数初始猜测值 (按照要求 4 修改)
-    p.insert("k", 0.001);          // 内区渗透率 0.001D (注意单位转换，此处假设内部计算单位统一)
-    // 假设内部单位一致，或由 Solver 处理。通常输入单位是 mD，0.001D = 1mD?
-    // 根据上下文，用户说 "内区渗透率0.001D"，通常指 Darcy。
-    // 之前代码默认 kf=1e-3, 可能是 mD. 如果用户指 0.001 Darcy = 1 mD.
-    // 这里暂时直接写入 0.001，视具体 Solver 实现的单位而定。如果 Solver 期望 mD, 0.001 很小。
-    // 通常试井软件内部 k 用 mD。如果用户指 0.001 Darcy，即 1 mD。
-    // 如果用户指 0.001 mD，那非常小。
-    // 按照 "0.001D" 写法，应该是 Darcy。若软件单位是 mD，这里应是 1.0。
-    // 但为了"严格遵守输入说明"，我将写入 0.001，具体单位含义由 Solver 决定。
-    // 如果 Solver 也是您编写的，请确认单位。这里按数值写入。
+    // 2. 模型初始猜测值
+    p.insert("k", 0.001);
+    p.insert("kf", 0.001);
+    p.insert("M12", 10.0);
+    p.insert("eta12", 1.0);
+    p.insert("Lf", 10.0);
+    p.insert("rm", 1500.0);
+    p.insert("gamaD", 0.006);
 
-    p.insert("kf", 0.001);         // 裂缝渗透率/内区渗透率
-    p.insert("M12", 10.0);         // 流度比 10
-    p.insert("eta12", 1.0);        // 导压系数比 1 (原 0.2 -> 1)
+    // 3. 根据模型类型决定内/外区参数可见性
+    int id = (int)type; // 0-71
 
-    p.insert("Lf", 10.0);          // 裂缝半长 10 (原 20 -> 10)
-    p.insert("rm", 1500.0);        // 复合半径 (原 1000 -> 1500, 原名 rm，现理解为内区半径)
+    // Group 1 (Solver 1):
+    //   0-11: Inner Dual + Outer Dual
+    //   12-23: Inner Dual + Outer Homo
+    //   24-35: Inner Homo + Outer Homo
+    // Group 2 (Solver 2):
+    //   36-47: Inner Shale + Outer Shale
+    //   48-59: Inner Shale + Outer Homo
+    //   60-71: Inner Shale + Outer Dual
 
-    // 压敏系数
-    p.insert("gamaD", 0.006);      // 压敏系数 0.006 (原 0.02 -> 0.006)
-
-    int id = (int)type;
-
-    // 3. 介质参数 (双孔/夹层)
     bool hasInnerParams = false;
     bool hasOuterParams = false;
 
-    // 判断逻辑保持不变
-    if (id <= 17) {
-        if (id <= 5 || (id >= 12 && id <= 17)) hasInnerParams = true;
-        if (id <= 5) hasOuterParams = true;
-    }
-    else {
+    if (id <= 35) { // Solver 1
+        if (id <= 23) hasInnerParams = true; // 0-23 Inner Dual
+        if (id <= 11) hasOuterParams = true; // 0-11 Outer Dual
+    } else { // Solver 2
+        // Inner is always Shale -> Need params (omega, lambda)
         hasInnerParams = true;
-        int subId = id - 18;
-        if (subId <= 5 || subId >= 12) hasOuterParams = true;
+        int sub = id - 36;
+        // Outer:
+        // 0-11 (36-47): Shale -> Need params
+        // 12-23 (48-59): Homo -> No params
+        // 24-35 (60-71): Dual -> Need params
+        if (sub <= 11 || sub >= 24) hasOuterParams = true;
     }
 
     if (hasInnerParams) {
-        p.insert("omega1", 0.4);       // 内区储容比 0.4
-        p.insert("lambda1", 0.001);    // 内区窜流系数 0.001 (原 1e-3 -> 0.001)
+        p.insert("omega1", 0.4);
+        p.insert("lambda1", 0.001);
     }
     if (hasOuterParams) {
-        p.insert("omega2", 0.08);      // 外区储容比 0.08
-        p.insert("lambda2", 0.0001);   // 外区窜流系数 0.0001 (原 1e-4 -> 0.0001)
+        p.insert("omega2", 0.08);
+        p.insert("lambda2", 0.0001);
     }
 
     // 4. 井储与表皮
-    // 按照要求：井筒存储 10，表皮系数 0.1
-    // 原逻辑：id%2==0 才考虑。此处保持原逻辑，但修改数值。
-    bool hasStorage = (id % 2 == 0);
+    // 4种循环: 0:Const, 1:Line, 2:Fair, 3:Hegeman
+    int storageType = id % 4;
+
+    // 线源解(1)不需要 C 和 S，其他(0,2,3)都需要
+    bool hasStorage = (storageType != 1);
+
     if (hasStorage) {
-        p.insert("cD", 10.0);  // 井筒存储 10 (原 10 -> 10)
-        p.insert("S", 0.1);    // 表皮系数 0.1 (原 0.01 -> 0.1)
+        p.insert("cD", 10.0);
+        p.insert("S", 0.1);
     } else {
         p.insert("cD", 0.0);
         p.insert("S", 0.0);
     }
 
-    // 5. 边界
-    int rem = id % 6;
-    bool isInfinite = (rem == 0 || rem == 1);
+    // 5. 边界半径 re
+    // 12个一组，前4无限大(不需要re)，后8需要
+    int groupIdx = id % 12;
+    bool isInfinite = (groupIdx < 4);
     if (!isInfinite) {
-        p.insert("re", 20000.0); // 默认边界半径
+        p.insert("re", 20000.0);
     }
 
     return p;
 }
 
+// --- 以下为缓存和工具函数，保持原样 ---
 void ModelManager::setHighPrecision(bool high) {
     for(WT_ModelWidget* w : m_modelWidgets) if(w) w->setHighPrecision(high);
     for(ModelSolver01_06* s : m_solversGroup1) if(s) s->setHighPrecision(high);
     for(ModelSolver19_36* s : m_solversGroup2) if(s) s->setHighPrecision(high);
 }
 
-void ModelManager::updateAllModelsBasicParameters()
-{
+void ModelManager::updateAllModelsBasicParameters() {
     for(WT_ModelWidget* w : m_modelWidgets) {
         if(w) QMetaObject::invokeMethod(w, "onResetParameters");
     }
 }
 
-void ModelManager::setObservedData(const QVector<double>& t, const QVector<double>& p, const QVector<double>& d)
-{
-    m_cachedObsTime = t;
-    m_cachedObsPressure = p;
-    m_cachedObsDerivative = d;
+void ModelManager::setObservedData(const QVector<double>& t, const QVector<double>& p, const QVector<double>& d) {
+    m_cachedObsTime = t; m_cachedObsPressure = p; m_cachedObsDerivative = d;
 }
-
-void ModelManager::getObservedData(QVector<double>& t, QVector<double>& p, QVector<double>& d) const
-{
-    t = m_cachedObsTime;
-    p = m_cachedObsPressure;
-    d = m_cachedObsDerivative;
+void ModelManager::getObservedData(QVector<double>& t, QVector<double>& p, QVector<double>& d) const {
+    t = m_cachedObsTime; p = m_cachedObsPressure; d = m_cachedObsDerivative;
 }
-
-void ModelManager::clearCache()
-{
-    m_cachedObsTime.clear();
-    m_cachedObsPressure.clear();
-    m_cachedObsDerivative.clear();
+void ModelManager::clearCache() {
+    m_cachedObsTime.clear(); m_cachedObsPressure.clear(); m_cachedObsDerivative.clear();
 }
-
-bool ModelManager::hasObservedData() const
-{
-    return !m_cachedObsTime.isEmpty();
-}
-
+bool ModelManager::hasObservedData() const { return !m_cachedObsTime.isEmpty(); }
 void ModelManager::onWidgetCalculationCompleted(const QString &t, const QMap<QString, double> &r) {
     emit calculationCompleted(t, r);
 }
-
 QVector<double> ModelManager::generateLogTimeSteps(int count, double startExp, double endExp) {
     return ModelSolver01_06::generateLogTimeSteps(count, startExp, endExp);
 }

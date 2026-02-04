@@ -2,13 +2,9 @@
  * 文件名: modelselect.cpp
  * 文件作用: 模型选择对话框逻辑实现
  * 功能描述:
- * 1. 初始化模型选择界面的各个下拉框选项。
- * 2. 实现储层模型与内外区模型选项的动态联动。
- * 3. 根据最新的模型对应表及用户指令，实现用户选择条件到模型ID (modelwidget1-36) 的映射。
- * - Model 1-6: 夹层型+夹层型
- * - Model 7-12: 径向复合 (均质+均质)
- * - Model 13-18: 夹层型+均质
- * - Model 19-36: 页岩型
+ * 1. 初始化模型选择 UI，增加了 Fair 和 Hegeman 井储模型选项。
+ * 2. 实现了 5 个维度（井、储层、边界、井储、介质组合）到 72 个模型 ID 的双向映射。
+ * 3. 严格遵循 modelsolver1.csv 和 modelsolver2.csv 的模型定义顺序。
  */
 
 #include "modelselect.h"
@@ -25,8 +21,10 @@ ModelSelect::ModelSelect(QWidget *parent) :
     ui->setupUi(this);
     this->setStyleSheet("QWidget { color: black; font-family: Arial; }");
 
+    // 初始化下拉框选项
     initOptions();
 
+    // 信号槽连接
     connect(ui->comboReservoirModel, SIGNAL(currentIndexChanged(int)), this, SLOT(updateInnerOuterOptions()));
     connect(ui->comboWellModel, SIGNAL(currentIndexChanged(int)), this, SLOT(onSelectionChanged()));
     connect(ui->comboReservoirModel, SIGNAL(currentIndexChanged(int)), this, SLOT(onSelectionChanged()));
@@ -38,6 +36,7 @@ ModelSelect::ModelSelect(QWidget *parent) :
     connect(ui->buttonBox, &QDialogButtonBox::accepted, this, &ModelSelect::onAccepted);
     connect(ui->buttonBox, &QDialogButtonBox::rejected, this, &QDialog::reject);
 
+    // 初始触发一次选择更新
     onSelectionChanged();
 }
 
@@ -56,19 +55,27 @@ void ModelSelect::initOptions()
     ui->comboStorage->clear();
     ui->comboInnerOuter->clear();
 
+    // 1. 井模型
     ui->comboWellModel->addItem("压裂水平井", "FracHorizontal");
 
-    ui->comboReservoirModel->addItem("径向复合模型", "RadialComposite");         // 对应 Model 7-12 (均质+均质)
-    ui->comboReservoirModel->addItem("夹层型径向复合模型", "InterlayerComposite"); // 对应 Model 1-6, 13-18
-    ui->comboReservoirModel->addItem("页岩型径向复合模型", "ShaleComposite");      // 对应 Model 19-36
-    ui->comboReservoirModel->addItem("混积型径向复合模型", "MixedComposite");      // 预留
+    // 2. 储层模型 (涵盖 72 个模型的三大类)
+    // Solver 1: 径向复合(25-36), 夹层型(1-24)
+    // Solver 2: 页岩型(37-72)
+    ui->comboReservoirModel->addItem("径向复合模型", "RadialComposite");
+    ui->comboReservoirModel->addItem("夹层型径向复合模型", "InterlayerComposite");
+    ui->comboReservoirModel->addItem("页岩型径向复合模型", "ShaleComposite");
+    ui->comboReservoirModel->addItem("混积型径向复合模型", "MixedComposite"); // 预留
 
+    // 3. 边界条件
     ui->comboBoundary->addItem("无限大外边界", "Infinite");
     ui->comboBoundary->addItem("封闭边界", "Closed");
     ui->comboBoundary->addItem("定压边界", "ConstantPressure");
 
-    ui->comboStorage->addItem("考虑井储表皮", "Consider");
-    ui->comboStorage->addItem("不考虑井储表皮", "Ignore");
+    // 4. 井储模型 [修改：增加 Fair 和 Hegeman]
+    ui->comboStorage->addItem("定井储", "Constant");
+    ui->comboStorage->addItem("线源解", "LineSource");
+    ui->comboStorage->addItem("Fair模型", "Fair");
+    ui->comboStorage->addItem("Hegeman模型", "Hegeman");
 
     ui->comboWellModel->setCurrentIndex(0);
     ui->comboReservoirModel->setCurrentIndex(0);
@@ -85,18 +92,15 @@ void ModelSelect::updateInnerOuterOptions()
     ui->comboInnerOuter->clear();
     QString currentRes = ui->comboReservoirModel->currentData().toString();
 
+    // 根据储层模型动态填充内外区组合
     if (currentRes == "RadialComposite") {
-        // Model 7-12: 径向复合 -> 均质+均质
         ui->comboInnerOuter->addItem("均质+均质", "Homo_Homo");
     }
     else if (currentRes == "InterlayerComposite") {
-        // Model 1-6: 夹层型+夹层型
         ui->comboInnerOuter->addItem("夹层型+夹层型", "Interlayer_Interlayer");
-        // Model 13-18: 夹层型+均质
         ui->comboInnerOuter->addItem("夹层型+均质", "Interlayer_Homo");
     }
     else if (currentRes == "ShaleComposite") {
-        // Model 19-36
         ui->comboInnerOuter->addItem("页岩型+页岩型", "Shale_Shale");
         ui->comboInnerOuter->addItem("页岩型+均质", "Shale_Homo");
         ui->comboInnerOuter->addItem("页岩型+双重孔隙", "Shale_Dual");
@@ -116,12 +120,13 @@ void ModelSelect::updateInnerOuterOptions()
     ui->comboInnerOuter->setVisible(true);
 }
 
+// 根据模型代码 ID (1-72) 反向设置 UI 选项
 void ModelSelect::setCurrentModelCode(const QString& code)
 {
     m_isInitializing = true;
     QString numStr = code;
     numStr.remove("modelwidget");
-    int id = numStr.toInt();
+    int id = numStr.toInt(); // 1-72
 
     if (id >= 1) {
         int idxWell = ui->comboWellModel->findData("FracHorizontal");
@@ -129,26 +134,19 @@ void ModelSelect::setCurrentModelCode(const QString& code)
 
         QString resData, ioData;
 
-        if (id >= 1 && id <= 6) {
-            // 夹层型 (1-6) -> 夹层+夹层
-            resData = "InterlayerComposite";
-            ioData = "Interlayer_Interlayer";
-        }
-        else if (id >= 7 && id <= 12) {
-            // 径向复合 (7-12) -> 均质+均质
-            resData = "RadialComposite";
-            ioData = "Homo_Homo";
-        }
-        else if (id >= 13 && id <= 18) {
-            // 夹层型 (13-18) -> 夹层+均质
-            resData = "InterlayerComposite";
-            ioData = "Interlayer_Homo";
-        }
-        else if (id >= 19 && id <= 36) {
-            resData = "ShaleComposite";
-            if (id <= 24) ioData = "Shale_Shale";
-            else if (id <= 30) ioData = "Shale_Homo";
-            else ioData = "Shale_Dual";
+        // --- 储层与介质映射 ---
+        if (id >= 1 && id <= 12) {
+            resData = "InterlayerComposite"; ioData = "Interlayer_Interlayer";
+        } else if (id >= 13 && id <= 24) {
+            resData = "InterlayerComposite"; ioData = "Interlayer_Homo";
+        } else if (id >= 25 && id <= 36) {
+            resData = "RadialComposite"; ioData = "Homo_Homo";
+        } else if (id >= 37 && id <= 48) {
+            resData = "ShaleComposite"; ioData = "Shale_Shale";
+        } else if (id >= 49 && id <= 60) {
+            resData = "ShaleComposite"; ioData = "Shale_Homo";
+        } else if (id >= 61 && id <= 72) {
+            resData = "ShaleComposite"; ioData = "Shale_Dual";
         }
 
         int idxRes = ui->comboReservoirModel->findData(resData);
@@ -157,19 +155,29 @@ void ModelSelect::setCurrentModelCode(const QString& code)
             updateInnerOuterOptions();
         }
 
+        // --- 边界映射 ---
+        // 规律: 12个一组，前4个Infinite，中4个Closed，后4个ConstantP
+        int groupOffset = (id - 1) % 12;
         QString bndData;
-        int rem = (id - 1) % 6;
-        if (rem == 0 || rem == 1) bndData = "Infinite";
-        else if (rem == 2 || rem == 3) bndData = "Closed";
+        if (groupOffset < 4) bndData = "Infinite";
+        else if (groupOffset < 8) bndData = "Closed";
         else bndData = "ConstantPressure";
-
         int idxBnd = ui->comboBoundary->findData(bndData);
         if (idxBnd >= 0) ui->comboBoundary->setCurrentIndex(idxBnd);
 
-        QString storeData = (id % 2 != 0) ? "Consider" : "Ignore";
+        // --- 井储映射 ---
+        // 规律: 4个循环
+        int storageOffset = (id - 1) % 4;
+        QString storeData;
+        if (storageOffset == 0) storeData = "Constant";
+        else if (storageOffset == 1) storeData = "LineSource";
+        else if (storageOffset == 2) storeData = "Fair";
+        else storeData = "Hegeman";
+
         int idxStore = ui->comboStorage->findData(storeData);
         if (idxStore >= 0) ui->comboStorage->setCurrentIndex(idxStore);
 
+        // 设置介质组合
         int idxIo = ui->comboInnerOuter->findData(ioData);
         if (idxIo >= 0) ui->comboInnerOuter->setCurrentIndex(idxIo);
     }
@@ -178,6 +186,7 @@ void ModelSelect::setCurrentModelCode(const QString& code)
     onSelectionChanged();
 }
 
+// UI 选项改变时，计算模型 ID
 void ModelSelect::onSelectionChanged()
 {
     if (m_isInitializing) return;
@@ -191,90 +200,55 @@ void ModelSelect::onSelectionChanged()
     m_selectedModelCode = "";
     m_selectedModelName = "";
 
-    // === 1. 径向复合模型 (Model 7-12) ===
-    if (well == "FracHorizontal" && res == "RadialComposite") {
-        if (io == "Homo_Homo") { // 7-12
-            if (bnd == "Infinite") {
-                if (store == "Consider") { m_selectedModelCode = "modelwidget7"; m_selectedModelName = "径向复合储层试井解释7"; }
-                else                     { m_selectedModelCode = "modelwidget8"; m_selectedModelName = "径向复合储层试井解释8"; }
-            } else if (bnd == "Closed") {
-                if (store == "Consider") { m_selectedModelCode = "modelwidget9"; m_selectedModelName = "径向复合储层试井解释9"; }
-                else                     { m_selectedModelCode = "modelwidget10"; m_selectedModelName = "径向复合储层试井解释10"; }
-            } else if (bnd == "ConstantPressure") {
-                if (store == "Consider") { m_selectedModelCode = "modelwidget11"; m_selectedModelName = "径向复合储层试井解释11"; }
-                else                     { m_selectedModelCode = "modelwidget12"; m_selectedModelName = "径向复合储层试井解释12"; }
-            }
+    // 辅助 lambda：根据基础 ID 和选项偏移计算最终 ID
+    // 基础 ID 是该大类（介质组合）的起始 ID
+    auto calcID = [&](int startId, QString bndType, QString storeType) -> int {
+        int offsetBnd = 0;
+        if (bndType == "Closed") offsetBnd = 4;
+        else if (bndType == "ConstantPressure") offsetBnd = 8;
+
+        int offsetStore = 0;
+        if (storeType == "LineSource") offsetStore = 1;
+        else if (storeType == "Fair") offsetStore = 2;
+        else if (storeType == "Hegeman") offsetStore = 3;
+
+        return startId + offsetBnd + offsetStore;
+    };
+
+    int baseStartId = 0;
+    QString baseNameCn = "";
+
+    // 确定大类起始 ID
+    if (well == "FracHorizontal") {
+        if (res == "InterlayerComposite") {
+            if (io == "Interlayer_Interlayer") { baseStartId = 1; baseNameCn = "夹层型储层试井解释模型"; }
+            else if (io == "Interlayer_Homo") { baseStartId = 13; baseNameCn = "夹层型储层试井解释模型"; }
+        } else if (res == "RadialComposite") {
+            if (io == "Homo_Homo") { baseStartId = 25; baseNameCn = "径向复合模型"; }
+        } else if (res == "ShaleComposite") {
+            if (io == "Shale_Shale") { baseStartId = 37; baseNameCn = "页岩型储层试井解释模型"; }
+            else if (io == "Shale_Homo") { baseStartId = 49; baseNameCn = "页岩型储层试井解释模型"; }
+            else if (io == "Shale_Dual") { baseStartId = 61; baseNameCn = "页岩型储层试井解释模型"; }
         }
     }
-    // === 2. 夹层型径向复合模型 (Model 1-6, 13-18) ===
-    else if (well == "FracHorizontal" && res == "InterlayerComposite") {
-        if (io == "Interlayer_Interlayer") { // 1-6
-            if (bnd == "Infinite") {
-                if (store == "Consider") { m_selectedModelCode = "modelwidget1"; m_selectedModelName = "夹层型储层试井解释1"; }
-                else                     { m_selectedModelCode = "modelwidget2"; m_selectedModelName = "夹层型储层试井解释2"; }
-            } else if (bnd == "Closed") {
-                if (store == "Consider") { m_selectedModelCode = "modelwidget3"; m_selectedModelName = "夹层型储层试井解释3"; }
-                else                     { m_selectedModelCode = "modelwidget4"; m_selectedModelName = "夹层型储层试井解释4"; }
-            } else if (bnd == "ConstantPressure") {
-                if (store == "Consider") { m_selectedModelCode = "modelwidget5"; m_selectedModelName = "夹层型储层试井解释5"; }
-                else                     { m_selectedModelCode = "modelwidget6"; m_selectedModelName = "夹层型储层试井解释6"; }
-            }
-        }
-        else if (io == "Interlayer_Homo") { // 13-18 (夹层型+均质)
-            if (bnd == "Infinite") {
-                if (store == "Consider") { m_selectedModelCode = "modelwidget13"; m_selectedModelName = "夹层型储层试井解释13"; }
-                else                     { m_selectedModelCode = "modelwidget14"; m_selectedModelName = "夹层型储层试井解释14"; }
-            } else if (bnd == "Closed") {
-                if (store == "Consider") { m_selectedModelCode = "modelwidget15"; m_selectedModelName = "夹层型储层试井解释15"; }
-                else                     { m_selectedModelCode = "modelwidget16"; m_selectedModelName = "夹层型储层试井解释16"; }
-            } else if (bnd == "ConstantPressure") {
-                if (store == "Consider") { m_selectedModelCode = "modelwidget17"; m_selectedModelName = "夹层型储层试井解释17"; }
-                else                     { m_selectedModelCode = "modelwidget18"; m_selectedModelName = "夹层型储层试井解释18"; }
-            }
-        }
-    }
-    // === 3. 页岩型径向复合模型 (Model 19-36) ===
-    else if (well == "FracHorizontal" && res == "ShaleComposite") {
-        if (io == "Shale_Shale") { // 19-24
-            if (bnd == "Infinite") {
-                if (store == "Consider") { m_selectedModelCode = "modelwidget19"; m_selectedModelName = "页岩型储层试井解释1"; }
-                else                     { m_selectedModelCode = "modelwidget20"; m_selectedModelName = "页岩型储层试井解释2"; }
-            } else if (bnd == "Closed") {
-                if (store == "Consider") { m_selectedModelCode = "modelwidget21"; m_selectedModelName = "页岩型储层试井解释3"; }
-                else                     { m_selectedModelCode = "modelwidget22"; m_selectedModelName = "页岩型储层试井解释4"; }
-            } else if (bnd == "ConstantPressure") {
-                if (store == "Consider") { m_selectedModelCode = "modelwidget23"; m_selectedModelName = "页岩型储层试井解释5"; }
-                else                     { m_selectedModelCode = "modelwidget24"; m_selectedModelName = "页岩型储层试井解释6"; }
-            }
-        }
-        else if (io == "Shale_Homo") { // 25-30
-            if (bnd == "Infinite") {
-                if (store == "Consider") { m_selectedModelCode = "modelwidget25"; m_selectedModelName = "页岩型储层试井解释7"; }
-                else                     { m_selectedModelCode = "modelwidget26"; m_selectedModelName = "页岩型储层试井解释8"; }
-            } else if (bnd == "Closed") {
-                if (store == "Consider") { m_selectedModelCode = "modelwidget27"; m_selectedModelName = "页岩型储层试井解释9"; }
-                else                     { m_selectedModelCode = "modelwidget28"; m_selectedModelName = "页岩型储层试井解释10"; }
-            } else if (bnd == "ConstantPressure") {
-                if (store == "Consider") { m_selectedModelCode = "modelwidget29"; m_selectedModelName = "页岩型储层试井解释11"; }
-                else                     { m_selectedModelCode = "modelwidget30"; m_selectedModelName = "页岩型储层试井解释12"; }
-            }
-        }
-        else if (io == "Shale_Dual") { // 31-36
-            if (bnd == "Infinite") {
-                if (store == "Consider") { m_selectedModelCode = "modelwidget31"; m_selectedModelName = "页岩型储层试井解释13"; }
-                else                     { m_selectedModelCode = "modelwidget32"; m_selectedModelName = "页岩型储层试井解释14"; }
-            } else if (bnd == "Closed") {
-                if (store == "Consider") { m_selectedModelCode = "modelwidget33"; m_selectedModelName = "页岩型储层试井解释15"; }
-                else                     { m_selectedModelCode = "modelwidget34"; m_selectedModelName = "页岩型储层试井解释16"; }
-            } else if (bnd == "ConstantPressure") {
-                if (store == "Consider") { m_selectedModelCode = "modelwidget35"; m_selectedModelName = "页岩型储层试井解释17"; }
-                else                     { m_selectedModelCode = "modelwidget36"; m_selectedModelName = "页岩型储层试井解释18"; }
-            }
-        }
+
+    if (baseStartId > 0) {
+        int finalId = calcID(baseStartId, bnd, store);
+        m_selectedModelCode = QString("modelwidget%1").arg(finalId);
+
+        // 显示名称调整 (保持与 Excel 表格一致的编号显示)
+        int displayId = 0;
+        // 径向复合模型 ID 是 1-12 (对应全局 25-36)
+        // 页岩型 ID 是 1-36 (对应全局 37-72)
+        // 夹层型 ID 是 1-24 (对应全局 1-24)
+        if (baseStartId == 25) displayId = finalId - 24;
+        else if (baseStartId >= 37) displayId = finalId - 36;
+        else displayId = finalId;
+
+        m_selectedModelName = QString("%1%2").arg(baseNameCn).arg(displayId);
     }
 
     bool isValid = !m_selectedModelCode.isEmpty();
-
     if (isValid) {
         ui->label_ModelName->setText(m_selectedModelName);
         ui->label_ModelName->setStyleSheet("color: black; font-weight: bold; font-size: 14px;");
